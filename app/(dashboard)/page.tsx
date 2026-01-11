@@ -1,15 +1,143 @@
 'use client';
 
-import { useState } from 'react';
-import { Eye, EyeOff, TrendingUp, TrendingDown, Plus, CreditCard, ShoppingBag, Coffee, ArrowUpRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import {
+  Eye,
+  EyeOff,
+  TrendingUp,
+  TrendingDown,
+  Plus,
+  CreditCard as CreditCardIcon,
+  ShoppingBag,
+  Coffee,
+  ArrowUpRight,
+  Loader2,
+  Wallet
+} from 'lucide-react';
+import Link from 'next/link';
+import api from '@/lib/api';
+import { NewTransactionModal } from '@/components/transactions/NewTransactionModal';
+
+// Tipos para os dados da API
+interface Transaction {
+  id: string;
+  description: string;
+  amount: number | string;
+  type: 'INCOME' | 'EXPENSE';
+  date: string;
+  category?: { name: string };
+  paymentMethod?: { name: string };
+}
+
+interface CreditCard {
+  id: string;
+  name: string;
+  last_four_digits: string;
+  limit: number;
+  available_limit: number;
+  closing_day: number;
+  due_day: number;
+  type: string; // mastercard, visa, etc
+  color?: string;
+}
+
+interface UserProfile {
+  firstName: string;
+  lastName: string;
+}
 
 export default function DashboardPage() {
   const [showBalance, setShowBalance] = useState(true);
+  const [loading, setLoading] = useState(true);
 
-  // Mock data (Substituiremos pela API depois)
-  const balance = 12450.00;
-  const income = 5200.00;
-  const expense = 3100.00;
+  // Estados de Dados
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [cards, setCards] = useState<CreditCard[]>([]);
+  const [isNewTransactionOpen, setIsNewTransactionOpen] = useState(false);
+
+  // Totais Calculados
+  const [financials, setFinancials] = useState({
+    balance: 0,
+    income: 0,
+    expense: 0
+  });
+
+  async function fetchData() {
+    try {
+      setLoading(true);
+
+      // Chamadas Paralelas para performance
+      const [userRes, transRes, cardsRes] = await Promise.all([
+        api.get('/auth/profile').catch(() => ({ data: { firstName: 'Usuário', lastName: '' } })),
+        api.get('/transactions').catch(() => ({ data: [] })),
+        api.get('/credit-cards').catch(() => ({ data: [] }))
+      ]);
+
+      setUser(userRes.data);
+
+      const txList: Transaction[] = Array.isArray(transRes.data) ? transRes.data : [];
+      setTransactions(txList);
+
+      const cardsList: CreditCard[] = Array.isArray(cardsRes.data) ? cardsRes.data : [];
+      setCards(cardsList);
+
+      // Calcular Totais do Mês Atual
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      let totalIncome = 0;
+      let totalExpense = 0;
+      let totalBalance = 0;
+
+      txList.forEach(t => {
+        const amount = Number(t.amount);
+        const tDate = new Date(t.date);
+
+        // Saldo Geral (considera tudo)
+        if (t.type === 'INCOME') totalBalance += amount;
+        else totalBalance -= amount;
+
+        // Receita/Despesa (só do mês atual)
+        if (tDate.getMonth() === currentMonth && tDate.getFullYear() === currentYear) {
+          if (t.type === 'INCOME') totalIncome += amount;
+          else totalExpense += amount;
+        }
+      });
+
+      setFinancials({
+        balance: totalBalance,
+        income: totalIncome,
+        expense: totalExpense
+      });
+
+    } catch (error) {
+      console.error('Erro ao carregar dashboard', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Pegar as 3 últimas transações
+  const recentTransactions = [...transactions]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 3);
+
+  // Pegar o cartão principal (primeiro da lista) ou null
+  const mainCard = cards.length > 0 ? cards[0] : null;
+
+  if (loading) {
+    return (
+        <div className="flex h-[80vh] items-center justify-center">
+          <Loader2 className="h-10 w-10 animate-spin text-emerald-600" />
+        </div>
+    );
+  }
 
   return (
       <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -18,13 +146,15 @@ export default function DashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
-              Olá, Luís 👋
+              Olá, {user?.firstName} 👋
             </h1>
             <p className="text-gray-500 mt-1">Aqui está o resumo das suas finanças hoje.</p>
           </div>
 
-          {/* Botão de Ação Rápida */}
-          <button className="inline-flex items-center justify-center px-5 py-2.5 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md active:scale-95">
+          <button
+              onClick={() => setIsNewTransactionOpen(true)}
+              className="inline-flex items-center justify-center px-5 py-2.5 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 transition-all shadow-sm hover:shadow-md active:scale-95"
+          >
             <Plus className="w-5 h-5 mr-2" />
             Nova Transação
           </button>
@@ -33,11 +163,10 @@ export default function DashboardPage() {
         {/* Cards Principais (Grid) */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-          {/* 1. Saldo Total (Destaque) */}
+          {/* 1. Saldo Total */}
           <div className="bg-emerald-600 text-white p-6 rounded-2xl shadow-lg relative overflow-hidden group">
-            {/* Decoração de fundo */}
             <div className="absolute top-0 right-0 p-4 opacity-10 transform translate-x-2 -translate-y-2">
-              <CreditCard className="w-24 h-24" />
+              <Wallet className="w-24 h-24" />
             </div>
 
             <div className="relative z-10">
@@ -50,14 +179,16 @@ export default function DashboardPage() {
                   {showBalance ? <Eye className="w-5 h-5" /> : <EyeOff className="w-5 h-5" />}
                 </button>
               </div>
-              <div className="text-3xl font-bold tracking-tight">
-                {showBalance ? `R$ ${balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '••••••'}
+              <div className="text-3xl font-bold tracking-tight truncate">
+                {showBalance
+                    ? `R$ ${financials.balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                    : '••••••'}
               </div>
               <div className="mt-4 flex items-center text-emerald-100 text-sm">
-              <span className="bg-emerald-500/30 px-2 py-1 rounded-lg mr-2 text-xs font-semibold">
-                +12%
-              </span>
-                em relação ao mês passado
+               <span className="bg-emerald-500/30 px-2 py-1 rounded-lg mr-2 text-xs font-semibold">
+                Atual
+               </span>
+                Calculado via transações
               </div>
             </div>
           </div>
@@ -71,10 +202,10 @@ export default function DashboardPage() {
               <span className="text-gray-500 font-medium text-sm">Receitas do Mês</span>
             </div>
             <div>
-              <div className="text-2xl font-bold text-gray-900">
-                R$ {income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <div className="text-2xl font-bold text-gray-900 truncate">
+                R$ {financials.income.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
-              <p className="text-xs text-gray-400 mt-1">Atualizado há 1 hora</p>
+              <p className="text-xs text-gray-400 mt-1">Este mês</p>
             </div>
           </div>
 
@@ -87,102 +218,125 @@ export default function DashboardPage() {
               <span className="text-gray-500 font-medium text-sm">Despesas do Mês</span>
             </div>
             <div>
-              <div className="text-2xl font-bold text-gray-900">
-                R$ {expense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              <div className="text-2xl font-bold text-gray-900 truncate">
+                R$ {financials.expense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </div>
-              <p className="text-xs text-gray-400 mt-1">70% do orçamento mensal</p>
+              <p className="text-xs text-gray-400 mt-1">Este mês</p>
             </div>
           </div>
         </div>
 
-        {/* Seção Inferior: Cartões e Transações Recentes */}
+        {/* Seção Inferior */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-          {/* Lista de Transações (Ocupa 2 colunas) */}
+          {/* Lista de Transações */}
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-gray-900">Transações Recentes</h2>
-              <button className="text-sm font-medium text-emerald-600 hover:text-emerald-700 flex items-center">
+              <Link href="/transactions" className="text-sm font-medium text-emerald-600 hover:text-emerald-700 flex items-center">
                 Ver todas <ArrowUpRight className="w-4 h-4 ml-1" />
-              </button>
+              </Link>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-[0_2px_10px_-2px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden">
-              {/* Item 1 */}
-              <div className="flex items-center p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 mr-4">
-                  <ShoppingBag className="w-5 h-5" />
-                </div>
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900">Supermercado Extra</h4>
-                  <p className="text-xs text-gray-500">Nubank • Hoje, 14:30</p>
-                </div>
-                <span className="font-semibold text-red-600 text-sm">- R$ 450,20</span>
-              </div>
-
-              {/* Item 2 */}
-              <div className="flex items-center p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 mr-4">
-                  <Coffee className="w-5 h-5" />
-                </div>
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900">Starbucks</h4>
-                  <p className="text-xs text-gray-500">Débito • Ontem</p>
-                </div>
-                <span className="font-semibold text-red-600 text-sm">- R$ 24,90</span>
-              </div>
-
-              {/* Item 3 */}
-              <div className="flex items-center p-4 hover:bg-gray-50 transition-colors">
-                <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 mr-4">
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900">Projeto Freelance</h4>
-                  <p className="text-xs text-gray-500">Pix • 10 Out</p>
-                </div>
-                <span className="font-semibold text-emerald-600 text-sm">+ R$ 1.200,00</span>
-              </div>
+            <div className="bg-white rounded-2xl shadow-[0_2px_10px_-2px_rgba(0,0,0,0.05)] border border-gray-100 overflow-hidden min-h-[200px]">
+              {recentTransactions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                    <ShoppingBag className="w-8 h-8 mb-2 opacity-50" />
+                    <p className="text-sm">Nenhuma transação recente.</p>
+                  </div>
+              ) : (
+                  recentTransactions.map((t) => (
+                      <div key={t.id} className="flex items-center p-4 border-b border-gray-50 last:border-0 hover:bg-gray-50 transition-colors">
+                        <div className={`
+                    h-10 w-10 rounded-full flex items-center justify-center mr-4 shrink-0
+                    ${t.type === 'INCOME' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-50 text-red-600'}
+                  `}>
+                          {t.type === 'INCOME' ? <TrendingUp className="w-5 h-5" /> : <ShoppingBag className="w-5 h-5" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-sm font-semibold text-gray-900 truncate">{t.description}</h4>
+                          <p className="text-xs text-gray-500 truncate">
+                            {t.category?.name || 'Geral'} • {new Date(t.date).toLocaleDateString('pt-BR')}
+                          </p>
+                        </div>
+                        <span className={`font-semibold text-sm whitespace-nowrap ${t.type === 'INCOME' ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {t.type === 'INCOME' ? '+' : '-'} R$ {Number(t.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                      </div>
+                  ))
+              )}
             </div>
           </div>
 
-          {/* Resumo de Cartões (Coluna da Direita) */}
+          {/* Resumo de Cartões */}
           <div className="space-y-6">
             <h2 className="text-lg font-bold text-gray-900">Meus Cartões</h2>
 
-            <div className="bg-gradient-to-br from-gray-900 to-gray-800 p-6 rounded-2xl text-white shadow-xl">
-              <div className="flex justify-between items-start mb-8">
-                <span className="font-medium opacity-80">Nubank</span>
-                <CreditCard className="w-6 h-6 opacity-80" />
-              </div>
-              <div className="text-lg tracking-widest mb-2 font-mono">
-                **** **** **** 4829
-              </div>
-              <div className="flex justify-between items-end mt-6">
-                <div>
-                  <span className="text-xs opacity-60 block uppercase">Titular</span>
-                  <span className="text-sm font-medium">LUIS ARAUJO</span>
-                </div>
-                <div>
-                  <span className="text-xs opacity-60 block uppercase text-right">Validade</span>
-                  <span className="text-sm font-medium">12/29</span>
-                </div>
-              </div>
-            </div>
+            {mainCard ? (
+                <div
+                    className="p-6 rounded-2xl text-white shadow-xl relative overflow-hidden"
+                    style={{
+                      background: mainCard.color || 'linear-gradient(135deg, #1f2937 0%, #111827 100%)'
+                    }}
+                >
+                  {/* Pattern decorativo */}
+                  <div className="absolute -right-6 -top-6 w-32 h-32 rounded-full bg-white opacity-10 blur-xl"></div>
 
-            <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-500">Fatura Atual</span>
-                <span className="text-gray-900 font-bold">R$ 1.420,50</span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2">
-                <div className="bg-emerald-500 h-2 rounded-full" style={{ width: '45%' }}></div>
-              </div>
-              <p className="text-xs text-gray-400 mt-2 text-right">Fecha em 10 dias</p>
-            </div>
+                  <div className="flex justify-between items-start mb-8 relative z-10">
+                    <span className="font-medium opacity-90 truncate pr-4">{mainCard.name}</span>
+                    <CreditCardIcon className="w-6 h-6 opacity-80 shrink-0" />
+                  </div>
+                  <div className="text-lg tracking-widest mb-2 font-mono relative z-10">
+                    **** **** **** {mainCard.last_four_digits}
+                  </div>
+                  <div className="flex justify-between items-end mt-6 relative z-10">
+                    <div>
+                      <span className="text-xs opacity-60 block uppercase">Limite Disp.</span>
+                      <span className="text-sm font-medium">R$ {Number(mainCard.available_limit).toLocaleString('pt-BR')}</span>
+                    </div>
+                    <div>
+                      <span className="text-xs opacity-60 block uppercase text-right">Vencimento</span>
+                      <span className="text-sm font-medium">Dia {mainCard.due_day}</span>
+                    </div>
+                  </div>
+                </div>
+            ) : (
+                <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center">
+                  <p className="text-sm text-gray-500 mb-2">Você ainda não tem cartões.</p>
+                  <Link href="/cards" className="text-sm font-medium text-emerald-600 hover:text-emerald-700">
+                    Cadastrar cartão
+                  </Link>
+                </div>
+            )}
+
+            {mainCard && (
+                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-gray-500">Limite Utilizado</span>
+                    <span className="text-gray-900 font-bold">
+                  {((1 - (Number(mainCard.available_limit) / Number(mainCard.limit))) * 100).toFixed(0)}%
+                </span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-2">
+                    <div
+                        className="bg-emerald-500 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${(1 - (Number(mainCard.available_limit) / Number(mainCard.limit))) * 100}%` }}
+                    ></div>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2 text-right">
+                    Total: R$ {Number(mainCard.limit).toLocaleString('pt-BR')}
+                  </p>
+                </div>
+            )}
           </div>
 
         </div>
+
+        <NewTransactionModal
+            isOpen={isNewTransactionOpen}
+            onClose={() => setIsNewTransactionOpen(false)}
+            onSuccess={fetchData} // Recarrega os dados ao criar nova transação
+        />
       </div>
   );
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
     Search,
     Filter,
@@ -11,70 +11,81 @@ import {
     Coffee,
     Home,
     Car,
-    MoreHorizontal
+    MoreHorizontal,
+    Loader2,
+    AlertCircle
 } from 'lucide-react';
-import { NewTransactionModal} from "@/components/transactions/NewTransactionModal";
+import { NewTransactionModal } from '@/components/transactions/NewTransactionModal';
+import api from '@/lib/api';
 
-// --- Tipagem (Simulada) ---
+// --- Tipagem baseada no retorno da API ---
 type Transaction = {
     id: string;
     description: string;
-    amount: number;
-    date: string; // ISO String
+    amount: number | string; // Aceita string caso o backend envie decimal como string
+    date: string;
     type: 'INCOME' | 'EXPENSE';
-    category: string;
-    paymentMethod: string;
+    // O backend retorna o objeto da relação
+    category?: { id: string; name: string; icon?: string };
+    paymentMethod?: { id: string; name: string };
 };
 
-// --- Dados Mockados (Para visualização) ---
-const MOCK_TRANSACTIONS: Transaction[] = [
-    {
-        id: '1',
-        description: 'Supermercado Mensal',
-        amount: 850.50,
-        date: '2025-10-12T14:30:00',
-        type: 'EXPENSE',
-        category: 'Alimentação',
-        paymentMethod: 'Nubank Crédito',
-    },
-    {
-        id: '2',
-        description: 'Projeto Freelance',
-        amount: 2500.00,
-        date: '2025-10-12T10:00:00',
-        type: 'INCOME',
-        category: 'Salário',
-        paymentMethod: 'Conta Inter',
-    },
-    {
-        id: '3',
-        description: 'Uber para o trabalho',
-        amount: 24.90,
-        date: '2025-10-11T18:45:00',
-        type: 'EXPENSE',
-        category: 'Transporte',
-        paymentMethod: 'Nubank Débito',
-    },
-    {
-        id: '4',
-        description: 'Netflix',
-        amount: 55.90,
-        date: '2025-10-10T09:00:00',
-        type: 'EXPENSE',
-        category: 'Lazer',
-        paymentMethod: 'Nubank Crédito',
-    },
-];
-
 export default function TransactionsPage() {
-    const [currentMonth, setCurrentMonth] = useState('Outubro 2025');
-    const [isNewTransactionOpen, setIsNewTransactionOpen] = useState(false); // Estado do Modal
+    // Inicializa sempre como array vazio
+    const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
 
-    // Função auxiliar para agrupar transações por dia
-    const groupedTransactions = MOCK_TRANSACTIONS.reduce((groups, transaction) => {
-        const date = new Date(transaction.date).toLocaleDateString('pt-BR', {
+    const [currentDate, setCurrentDate] = useState(new Date());
+    const [isNewTransactionOpen, setIsNewTransactionOpen] = useState(false);
+
+    // Busca Transações
+    const fetchTransactions = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError('');
+
+            const response = await api.get('/transactions');
+            const data = response.data;
+
+            // --- CORREÇÃO DE SEGURANÇA ---
+            if (Array.isArray(data)) {
+                setTransactions(data);
+            } else if (data && Array.isArray(data.data)) {
+                // Suporte caso o backend passe a retornar paginação { data: [], meta: ... }
+                setTransactions(data.data);
+            } else {
+                console.warn('API retornou formato inesperado em /transactions:', data);
+                setTransactions([]); // Fallback para array vazio
+            }
+
+        } catch (err) {
+            console.error(err);
+            setError('Erro ao carregar transações.');
+            setTransactions([]); // Garante array vazio no erro
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    // Carrega ao iniciar
+    useEffect(() => {
+        fetchTransactions();
+    }, [fetchTransactions]);
+
+    // --- CORREÇÃO NO REDUCE ---
+    // Garante que 'list' seja um array antes de rodar o reduce
+    const list = Array.isArray(transactions) ? transactions : [];
+
+    const groupedTransactions = list.reduce((groups, transaction) => {
+        // Garante que a data seja válida
+        const dateObj = new Date(transaction.date);
+        if (isNaN(dateObj.getTime())) return groups; // Pula se data for inválida
+
+        const date = dateObj.toLocaleDateString('pt-BR', {
             day: '2-digit',
             month: 'long',
+            year: 'numeric'
         });
 
         if (!groups[date]) {
@@ -84,21 +95,27 @@ export default function TransactionsPage() {
         return groups;
     }, {} as Record<string, Transaction[]>);
 
-    // Helper para escolher ícone
-    const getCategoryIcon = (category: string) => {
-        switch (category) {
-            case 'Alimentação': return <ShoppingBag className="w-5 h-5" />;
-            case 'Transporte': return <Car className="w-5 h-5" />;
-            case 'Lazer': return <Coffee className="w-5 h-5" />;
-            case 'Salário': return <Home className="w-5 h-5" />;
-            default: return <MoreHorizontal className="w-5 h-5" />;
-        }
+    // Helper de Ícone
+    const getCategoryIcon = (categoryName?: string) => {
+        const name = categoryName?.toLowerCase() || '';
+        if (name.includes('food') || name.includes('alimentação') || name.includes('mercado')) return <ShoppingBag className="w-5 h-5" />;
+        if (name.includes('transp') || name.includes('uber') || name.includes('combustível')) return <Car className="w-5 h-5" />;
+        if (name.includes('lazer') || name.includes('restaurante')) return <Coffee className="w-5 h-5" />;
+        if (name.includes('salário') || name.includes('renda') || name.includes('casa')) return <Home className="w-5 h-5" />;
+        return <MoreHorizontal className="w-5 h-5" />;
+    };
+
+    const handleMonthChange = (direction: 'prev' | 'next') => {
+        const newDate = new Date(currentDate);
+        if (direction === 'prev') newDate.setMonth(newDate.getMonth() - 1);
+        else newDate.setMonth(newDate.getMonth() + 1);
+        setCurrentDate(newDate);
     };
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-            {/* 1. Header & Controles */}
+            {/* 1. Header */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Transações</h1>
@@ -106,18 +123,25 @@ export default function TransactionsPage() {
                 </div>
 
                 <div className="flex gap-2 w-full sm:w-auto">
-                    {/* Seletor de Mês (Visual) */}
+                    {/* Seletor de Mês */}
                     <div className="flex items-center bg-white border border-gray-200 rounded-xl px-2 shadow-sm">
-                        <button className="p-2 hover:bg-gray-50 rounded-lg text-gray-500">
+                        <button
+                            onClick={() => handleMonthChange('prev')}
+                            className="p-2 hover:bg-gray-50 rounded-lg text-gray-500"
+                        >
                             <ArrowLeft className="w-4 h-4" />
                         </button>
-                        <span className="text-sm font-medium w-32 text-center text-gray-700">{currentMonth}</span>
-                        <button className="p-2 hover:bg-gray-50 rounded-lg text-gray-500">
+                        <span className="text-sm font-medium w-36 text-center text-gray-700 capitalize">
+              {currentDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+            </span>
+                        <button
+                            onClick={() => handleMonthChange('next')}
+                            className="p-2 hover:bg-gray-50 rounded-lg text-gray-500"
+                        >
                             <ArrowRight className="w-4 h-4" />
                         </button>
                     </div>
 
-                    {/* Botão Nova Transação (Abre o Modal) */}
                     <button
                         onClick={() => setIsNewTransactionOpen(true)}
                         className="bg-emerald-600 hover:bg-emerald-700 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-xl flex items-center justify-center transition-colors shadow-sm active:scale-95"
@@ -128,7 +152,7 @@ export default function TransactionsPage() {
                 </div>
             </div>
 
-            {/* 2. Filtros e Busca */}
+            {/* 2. Filtros */}
             <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row gap-4">
                 <div className="relative flex-1">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -136,74 +160,97 @@ export default function TransactionsPage() {
                     </div>
                     <input
                         type="text"
-                        placeholder="Buscar por nome, loja ou categoria..."
-                        className="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all sm:text-sm"
+                        placeholder="Buscar transação..."
+                        className="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-xl leading-5 bg-gray-50 text-gray-900 placeholder-gray-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-emerald-500 transition-all sm:text-sm"
                     />
                 </div>
-
                 <button className="flex items-center justify-center px-4 py-2 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
                     <Filter className="w-4 h-4 mr-2" />
                     Filtros
                 </button>
             </div>
 
-            {/* 3. Lista de Transações */}
-            <div className="bg-white rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] border border-gray-100 overflow-hidden">
-                {Object.entries(groupedTransactions).map(([date, transactions], index) => (
+            {/* 3. Lista */}
+            <div className="bg-white rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07)] border border-gray-100 overflow-hidden min-h-[300px]">
+
+                {loading && (
+                    <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                        <Loader2 className="w-8 h-8 animate-spin mb-2 text-emerald-600" />
+                        <p className="text-sm">Carregando transações...</p>
+                    </div>
+                )}
+
+                {!loading && error && (
+                    <div className="flex items-center justify-center py-12 text-red-500 bg-red-50 m-4 rounded-xl">
+                        <AlertCircle className="w-5 h-5 mr-2" />
+                        <span>{error}</span>
+                    </div>
+                )}
+
+                {!loading && !error && list.length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+                        <div className="bg-gray-50 p-4 rounded-full mb-4">
+                            <ShoppingBag className="w-8 h-8 text-gray-300" />
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-900">Nenhuma transação encontrada</h3>
+                        <p className="mt-1 text-gray-500 text-sm max-w-xs mx-auto">
+                            Suas compras e receitas aparecerão aqui. Tente adicionar uma nova transação.
+                        </p>
+                    </div>
+                )}
+
+                {!loading && !error && Object.entries(groupedTransactions).map(([date, items], index) => (
                     <div key={date}>
-                        {/* Header da Data */}
                         <div className={`px-6 py-3 bg-gray-50/50 border-y border-gray-100 flex justify-between items-center ${index === 0 ? 'border-t-0' : ''}`}>
                             <span className="text-sm font-semibold text-gray-600 capitalize">{date}</span>
                             <span className="text-xs text-gray-400 font-medium">
-                {transactions.length} transações
+                {items.length} item(s)
               </span>
                         </div>
 
-                        {/* Itens */}
                         <div className="divide-y divide-gray-50">
-                            {transactions.map((transaction) => (
+                            {items.map((t) => (
                                 <div
-                                    key={transaction.id}
+                                    key={t.id}
                                     className="group flex items-center p-4 sm:px-6 hover:bg-gray-50 transition-colors cursor-pointer"
                                 >
-                                    {/* Ícone */}
                                     <div className={`
-                    h-12 w-12 rounded-full flex items-center justify-center mr-4 shrink-0 transition-colors
-                    ${transaction.type === 'INCOME'
+                    h-10 w-10 sm:h-12 sm:w-12 rounded-full flex items-center justify-center mr-4 shrink-0 transition-colors
+                    ${t.type === 'INCOME'
                                         ? 'bg-emerald-100 text-emerald-600 group-hover:bg-emerald-200'
                                         : 'bg-red-50 text-red-600 group-hover:bg-red-100'
                                     }
                   `}>
-                                        {getCategoryIcon(transaction.category)}
+                                        {getCategoryIcon(t.category?.name)}
                                     </div>
 
-                                    {/* Detalhes */}
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-start mb-1">
                                             <h3 className="text-sm font-semibold text-gray-900 truncate pr-4">
-                                                {transaction.description}
+                                                {t.description}
                                             </h3>
                                             <span className={`text-sm font-bold whitespace-nowrap ${
-                                                transaction.type === 'INCOME' ? 'text-emerald-600' : 'text-gray-900'
+                                                t.type === 'INCOME' ? 'text-emerald-600' : 'text-gray-900'
                                             }`}>
-                        {transaction.type === 'EXPENSE' ? '- ' : '+ '}
-                                                R$ {transaction.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        {t.type === 'EXPENSE' ? '- ' : '+ '}
+                                                R$ {Number(t.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                       </span>
                                         </div>
 
                                         <div className="flex justify-between items-center text-xs text-gray-500">
-                                            <div className="flex items-center gap-2">
-                        <span className="bg-gray-100 px-2 py-0.5 rounded-md font-medium text-gray-600">
-                          {transaction.category}
-                        </span>
-                                                <span>•</span>
-                                                <span>{transaction.paymentMethod}</span>
+                                            <div className="flex items-center gap-2 overflow-hidden">
+                                                {t.category && (
+                                                    <span className="bg-gray-100 px-2 py-0.5 rounded-md font-medium text-gray-600 truncate">
+                            {t.category.name}
+                          </span>
+                                                )}
+                                                {t.paymentMethod && (
+                                                    <>
+                                                        <span>•</span>
+                                                        <span className="truncate">{t.paymentMethod.name}</span>
+                                                    </>
+                                                )}
                                             </div>
-
-                                            {/* Horário (opcional) */}
-                                            <span className="hidden sm:inline-block">
-                        {new Date(transaction.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
                                         </div>
                                     </div>
                                 </div>
@@ -211,33 +258,14 @@ export default function TransactionsPage() {
                         </div>
                     </div>
                 ))}
-
-                {/* Empty State (Caso não tenha transações) */}
-                {MOCK_TRANSACTIONS.length === 0 && (
-                    <div className="p-12 text-center">
-                        <div className="mx-auto h-12 w-12 text-gray-300 mb-4">
-                            <ShoppingBag className="w-full h-full" />
-                        </div>
-                        <h3 className="text-lg font-medium text-gray-900">Nenhuma transação encontrada</h3>
-                        <p className="mt-1 text-gray-500">Tente mudar os filtros ou adicione uma nova transação.</p>
-                    </div>
-                )}
             </div>
 
-            {/* Paginação ou Rodapé */}
-            <div className="text-center pb-8">
-                <button className="text-sm text-gray-500 hover:text-emerald-600 font-medium transition-colors">
-                    Carregar mais transações
-                </button>
-            </div>
-
-            {/* --- O MODAL ESTÁ AQUI --- */}
+            {/* Modal */}
             <NewTransactionModal
                 isOpen={isNewTransactionOpen}
                 onClose={() => setIsNewTransactionOpen(false)}
                 onSuccess={() => {
-                    console.log('Transação criada! Idealmente aqui recarregaríamos a API.');
-                    // ex: refetchTransactions();
+                    fetchTransactions();
                 }}
             />
 

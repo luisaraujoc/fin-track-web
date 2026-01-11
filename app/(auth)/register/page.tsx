@@ -4,13 +4,14 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { Eye, EyeOff, Lock, Mail, User, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Eye, EyeOff, Lock, Mail, User, Loader2, AlertCircle, ArrowLeft, AtSign } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import api from '@/lib/api';
 
 // 1. Esquema de Validação (Regras)
 const registerSchema = z.object({
+    username: z.string().min(3, 'O usuário deve ter pelo menos 3 caracteres'), // NOVO CAMPO
     firstName: z.string().min(2, 'O nome deve ter pelo menos 2 letras'),
     lastName: z.string().min(2, 'O sobrenome deve ter pelo menos 2 letras'),
     email: z.string().email('Digite um e-mail válido'),
@@ -39,22 +40,28 @@ export default function RegisterPage() {
     async function handleRegister(data: RegisterFormInputs) {
         setGeneralError(null);
         try {
-            // Ajuste para bater com o DTO do seu backend (CreateUserDto)
-            // O seu GoogleStrategy sugere que você usa firstName/lastName
+            // Envia payload completo conforme esperado pelo backend
             await api.post('/auth/register', {
-                email: data.email,
-                password: data.password,
+                username: data.username,
                 firstName: data.firstName,
                 lastName: data.lastName,
+                email: data.email,
+                password: data.password,
+                // Valores padrão
+                currency: "BRL",
+                language: "pt-BR",
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Sao_Paulo"
             });
 
-            // Sucesso! Redireciona para o login com uma query de sucesso (opcional)
+            // Sucesso!
             router.push('/login?registered=true');
 
         } catch (error: any) {
             console.error(error);
             if (error.response?.status === 409) {
-                setGeneralError('Este e-mail já está em uso.');
+                setGeneralError('Este e-mail ou usuário já está em uso.');
+            } else if (error.code === "ERR_NETWORK") {
+                setGeneralError('Erro de conexão. Verifique se o backend está rodando na porta 3001.');
             } else {
                 setGeneralError('Ocorreu um erro ao criar a conta. Tente novamente.');
             }
@@ -65,7 +72,6 @@ export default function RegisterPage() {
         <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 sm:px-6 lg:px-8 py-12">
             <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-2xl shadow-[0_4px_20px_-4px_rgba(0,0,0,0.1)] border border-gray-100">
 
-                {/* Link de Voltar */}
                 <Link
                     href="/login"
                     className="inline-flex items-center text-sm text-gray-500 hover:text-emerald-600 transition-colors"
@@ -74,7 +80,6 @@ export default function RegisterPage() {
                     Voltar para Login
                 </Link>
 
-                {/* Cabeçalho */}
                 <div className="text-center">
                     <h1 className="text-3xl font-bold text-emerald-600 tracking-tight">
                         Crie sua conta
@@ -84,7 +89,6 @@ export default function RegisterPage() {
                     </p>
                 </div>
 
-                {/* Erro Geral */}
                 {generalError && (
                     <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm flex items-center gap-2 border border-red-100 animate-in fade-in">
                         <AlertCircle className="h-4 w-4 shrink-0" />
@@ -94,7 +98,25 @@ export default function RegisterPage() {
 
                 <form className="mt-8 space-y-5" onSubmit={handleSubmit(handleRegister)}>
 
-                    {/* Nome e Sobrenome (Grid) */}
+                    {/* Username (NOVO) */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Usuário</label>
+                        <div className="relative">
+                            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <AtSign className="h-5 w-5 text-gray-400" />
+                            </div>
+                            <input
+                                {...register('username')}
+                                placeholder="joaosilva"
+                                className={`block w-full pl-10 pr-3 py-2.5 border ${
+                                    errors.username ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-emerald-500'
+                                } rounded-lg shadow-sm focus:outline-none focus:ring-1 transition-colors sm:text-sm`}
+                            />
+                        </div>
+                        {errors.username && <p className="mt-1 text-xs text-red-600">{errors.username.message}</p>}
+                    </div>
+
+                    {/* Nome e Sobrenome */}
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
@@ -104,7 +126,7 @@ export default function RegisterPage() {
                                 </div>
                                 <input
                                     {...register('firstName')}
-                                    placeholder="Seu nome"
+                                    placeholder="João"
                                     className={`block w-full pl-10 pr-3 py-2.5 border ${
                                         errors.firstName ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-emerald-500'
                                     } rounded-lg shadow-sm focus:outline-none focus:ring-1 transition-colors sm:text-sm`}
@@ -117,7 +139,7 @@ export default function RegisterPage() {
                             <label className="block text-sm font-medium text-gray-700 mb-1">Sobrenome</label>
                             <input
                                 {...register('lastName')}
-                                placeholder="Sobrenome"
+                                placeholder="Silva"
                                 className={`block w-full px-3 py-2.5 border ${
                                     errors.lastName ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-emerald-500'
                                 } rounded-lg shadow-sm focus:outline-none focus:ring-1 transition-colors sm:text-sm`}

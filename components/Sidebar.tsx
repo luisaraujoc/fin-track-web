@@ -9,12 +9,13 @@ import {
     PieChart,
     Target,
     Settings,
-    LogOut
+    LogOut, FileText
 } from 'lucide-react';
 
 const menuItems = [
     { icon: LayoutDashboard, label: 'Dashboard', href: '/' },
     { icon: ArrowRightLeft, label: 'Transações', href: '/transactions' },
+    { icon: FileText, label: 'Faturas', href: '/invoices' },
     { icon: CreditCard, label: 'Meus Cartões', href: '/cards' },
     { icon: PieChart, label: 'Relatórios', href: '/reports' },
     { icon: Target, label: 'Planejamento', href: '/planning' },
